@@ -18,12 +18,41 @@
 static const char *to_string(u32 value);
 static void dump_regs(void);
 
+/* Platform device */
+
+static ssize_t show_adc_value(struct device *dev, struct device_attribute *attr, char *buf) {
+	strncpy(buf, "hello", PAGE_SIZE);
+	return strlen(buf);
+}
+
+static DEVICE_ATTR(adin0, S_IRUGO, show_adc_value, NULL);
+static DEVICE_ATTR(adin1, S_IRUGO, show_adc_value, NULL);
+static DEVICE_ATTR(adin2, S_IRUGO, show_adc_value, NULL);
+
+static struct device_attribute *dev_attrs[] __initdata = {
+	&dev_attr_adin0,
+	&dev_attr_adin1,
+	&dev_attr_adin2,
+	NULL,
+};
+
 /* Platform driver */
 
 static struct platform_device *lpc32xx_adc_device;
 
 static int __init lpc32xx_adc_probe(struct platform_device *pdev) {
+	int i, err;
+
 	printk(KERN_INFO "lpc32xx_adc_probe\n");
+
+	for (i = 0; dev_attrs[i] != NULL; ++i) {
+		err = device_create_file(&pdev->dev, dev_attrs[i]);
+		if (err != 0) {
+			while (--i >= 0)
+				device_remove_file(&pdev->dev, dev_attrs[i]);
+			return err;
+		}
+	}
 
 	lpc32xx_adc_device = pdev;
 
