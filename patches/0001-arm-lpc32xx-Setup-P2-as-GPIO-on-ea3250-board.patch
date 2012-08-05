@@ -1,0 +1,28 @@
+From e94b2557fd1309367779c15690cf2aac1a01322f Mon Sep 17 00:00:00 2001
+From: Tobi Vollebregt <tobivollebregt@gmail.com>
+Date: Sun, 5 Aug 2012 09:50:04 +0200
+Subject: [PATCH] arm:lpc32xx: Setup P2 as GPIO on ea3250 board
+
+Signed-off-by: Tobi Vollebregt <tobivollebregt@gmail.com>
+---
+ arch/arm/mach-lpc32xx/ea3250.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/arch/arm/mach-lpc32xx/ea3250.c b/arch/arm/mach-lpc32xx/ea3250.c
+index 95f9b1d..5e73daf 100644
+--- a/arch/arm/mach-lpc32xx/ea3250.c
++++ b/arch/arm/mach-lpc32xx/ea3250.c
+@@ -1511,6 +1511,10 @@ void __init ea3250_board_init(void)
+ 	/* Intiliase GPIO */
+ 	lpc32xx_gpio_init();
+ 
++	/* Setup P2 as GPIO as opposed to EMC_D[31:19].
++           (The ea3250 board has a 16 bit physical databus to EMC) */
++	__raw_writel(_BIT(3), LPC32XX_GPIO_P2_MUX_SET);
++
+ #if defined (CONFIG_MMC_ARMMMCI)
+ 	/* Enable SD slot power */
+ 	mmc_power_enable(1);
+-- 
+1.7.11.2
+
