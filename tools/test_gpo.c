@@ -1,10 +1,8 @@
 /* Author: Tobi Vollebregt */
 
-#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
 #include <fcntl.h>
 
 void write_to_file(const char* filename, const char* data) {
