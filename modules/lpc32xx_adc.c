@@ -60,18 +60,75 @@ static int adc(int source) {
 	return tmp;
 }
 
+static int adc_get_speed(void) {
+	u32 tmp;
+
+	spin_lock(&adc_lock);
+	tmp = __raw_readl(LPC32XX_CLKPWR_ADC_CLK_CTRL_1);
+	spin_unlock(&adc_lock);
+
+	if (tmp & _BIT(8))
+		/* PERIPH clock */
+		tmp = 13000000 / ((tmp & 0xff) + 1);
+	else
+		/* RTC clock */
+		tmp = 32768;
+
+	return tmp;
+}
+
+static void adc_set_speed(int speed) {
+	u32 tmp, divisor;
+
+	/* Prevent division by zero */
+	if (speed < 32768)
+		speed = 32768;
+
+	divisor = (13000000 + speed / 2) / speed;
+
+	if (divisor > 256) {
+		if (abs(13000000 / 256 - speed) < abs(32768 - speed))
+			/* Use PERIPH_CLOCK with divisor of 256 */
+			tmp = 0x1ff;
+		else
+			/* Use RTC_CLOCK */
+			tmp = 0;
+	}
+	else {
+		/* Lower divisor results in out-of-range speed (max 4.5 MHz) */
+		if (divisor < 3)
+			divisor = 3;
+		tmp = _BIT(8) | (divisor - 1);
+	}
+
+	spin_lock(&adc_lock);
+	__raw_writel(tmp, LPC32XX_CLKPWR_ADC_CLK_CTRL_1);
+	spin_unlock(&adc_lock);
+}
+
 /* Platform device */
+
+static ssize_t show_adc_speed(struct device *dev, struct device_attribute *attr, char *buf) {
+	return scnprintf(buf, PAGE_SIZE, "%d", adc_get_speed());
+}
+
+static ssize_t store_adc_speed(struct device *dev, struct device_attribute *attr, const char *buf, size_t count) {
+	adc_set_speed(simple_strtoul(buf, NULL, 0));
+	return count;
+}
 
 static ssize_t show_adc_value(struct device *dev, struct device_attribute *attr, char *buf);
 
 static DEVICE_ATTR(adin0, S_IRUGO, show_adc_value, NULL);
 static DEVICE_ATTR(adin1, S_IRUGO, show_adc_value, NULL);
 static DEVICE_ATTR(adin2, S_IRUGO, show_adc_value, NULL);
+static DEVICE_ATTR(speed, S_IRUGO | S_IWUSR, show_adc_speed, store_adc_speed);
 
 static struct device_attribute *dev_attrs[] = {
 	&dev_attr_adin0,
 	&dev_attr_adin1,
 	&dev_attr_adin2,
+	&dev_attr_speed,
 	NULL,
 };
 
@@ -102,10 +159,6 @@ static int __init lpc32xx_adc_probe(struct platform_device *pdev) {
 	   (other settings in bits 9:6 are undefined) */
 	__raw_writel(__raw_readl(LPC32XX_ADC_SELECT) | _BIT(9) | _BIT(7),
 		LPC32XX_ADC_SELECT);
-
-	/* Select ADC clock source (RTC) and divider (n/a) */
-	/* TODO: Using PERIPH_CLOCK and divider may speed up AD conversion */
-	__raw_writel(0, LPC32XX_CLKPWR_ADC_CLK_CTRL_1);
 
 	/* Register device attributes */
 	for (i = 0; dev_attrs[i] != NULL; ++i) {
