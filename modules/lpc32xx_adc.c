@@ -31,6 +31,9 @@ static int adc(int source) {
 
 	spin_lock(&adc_lock);
 
+	/* Enable ADC clock */
+	__raw_writel(_BIT(0), LPC32XX_CLKPWR_ADC_CLK_CTRL);
+
 	/* Select ADC source */
 	tmp = __raw_readl(LPC32XX_ADC_SELECT);
 	tmp &= ~LPC32XX_ADC_SELECT_AD_IN_MASK;
@@ -46,6 +49,12 @@ static int adc(int source) {
 
 	/* Read value and mask out reserved (undefined) bits */
 	tmp = __raw_readl(LPC32XX_ADC_VALUE) & LPC32XX_ADC_VALUE_MASK;
+
+	/* Power down ADC */
+	__raw_writel(0, LPC32XX_ADC_CTRL);
+
+	/* Disable ADC clock */
+	__raw_writel(0, LPC32XX_CLKPWR_ADC_CLK_CTRL);
 
 	spin_unlock(&adc_lock);
 	return tmp;
@@ -98,12 +107,6 @@ static int __init lpc32xx_adc_probe(struct platform_device *pdev) {
 	/* TODO: Using PERIPH_CLOCK and divider may speed up AD conversion */
 	__raw_writel(0, LPC32XX_CLKPWR_ADC_CLK_CTRL_1);
 
-	/* Enable ADC clock */
-	__raw_writel(_BIT(0), LPC32XX_CLKPWR_ADC_CLK_CTRL);
-
-	/* Power on ADC */
-	__raw_writel(_BIT(2), LPC32XX_ADC_CTRL);
-
 	/* Register device attributes */
 	for (i = 0; dev_attrs[i] != NULL; ++i) {
 		err = device_create_file(&pdev->dev, dev_attrs[i]);
@@ -119,12 +122,6 @@ static int __init lpc32xx_adc_probe(struct platform_device *pdev) {
 }
 
 static int __devexit lpc32xx_adc_remove(struct platform_device *pdev) {
-	/* Power down ADC */
-	__raw_writel(0, LPC32XX_ADC_CTRL);
-
-	/* Disable ADC clock */
-	__raw_writel(0, LPC32XX_CLKPWR_ADC_CLK_CTRL);
-
 	lpc32xx_adc_device = NULL;
 	return 0;
 }
