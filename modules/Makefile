@@ -3,6 +3,7 @@
 ifneq ($(KERNELRELEASE),)
 # kbuild part of makefile
 obj-m += introspect.o
+obj-m += enable_p2.o
 
 else
 # normal part of makefile
