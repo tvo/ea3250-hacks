@@ -24,8 +24,12 @@
 
 /* Core */
 
+static DEFINE_SPINLOCK(adc_lock);
+
 static int adc(int source) {
 	u32 tmp;
+
+	spin_lock(&adc_lock);
 
 	/* Select ADC source */
 	tmp = __raw_readl(LPC32XX_ADC_SELECT);
@@ -41,7 +45,10 @@ static int adc(int source) {
 	while ((__raw_readl(LPC32XX_SIC1_RSR) & LPC32XX_SIC1_RSR_ADC_INT) == 0) ;
 
 	/* Read value and mask out reserved (undefined) bits */
-	return __raw_readl(LPC32XX_ADC_VALUE) & LPC32XX_ADC_VALUE_MASK;
+	tmp = __raw_readl(LPC32XX_ADC_VALUE) & LPC32XX_ADC_VALUE_MASK;
+
+	spin_unlock(&adc_lock);
+	return tmp;
 }
 
 /* Platform device */
