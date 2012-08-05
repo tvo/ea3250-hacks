@@ -1,0 +1,66 @@
+From 1d63b9bff7c633761920f86819f1c57df45ebece Mon Sep 17 00:00:00 2001
+From: Tobi Vollebregt <tobivollebregt@gmail.com>
+Date: Sun, 5 Aug 2012 09:49:51 +0200
+Subject: [PATCH] arm:lpc32xx: Remove PHY LED device from ea3250 board setup
+
+This frees up GPIO P2.1, which is connected to the joystick switch on
+the QVGA Base Board.
+
+Signed-off-by: Tobi Vollebregt <tobivollebregt@gmail.com>
+---
+ arch/arm/mach-lpc32xx/ea3250.c | 25 -------------------------
+ 1 file changed, 25 deletions(-)
+
+diff --git a/arch/arm/mach-lpc32xx/ea3250.c b/arch/arm/mach-lpc32xx/ea3250.c
+index a4ee0aa..95f9b1d 100644
+--- a/arch/arm/mach-lpc32xx/ea3250.c
++++ b/arch/arm/mach-lpc32xx/ea3250.c
+@@ -54,7 +54,6 @@
+ /*
+  * Mapped GPIOLIB GPIOs
+  */
+-#define	LED_GPIO	LPC32XX_GPIO(LPC32XX_GPIO_P2_GRP, 1)
+ #define	SPI0_CS_GPIO	LPC32XX_GPIO(LPC32XX_GPO_P3_GRP, 11)
+ #define	ADS_TS_GPIO	LPC32XX_GPIO(LPC32XX_GPIO_P3_GRP, 0)
+ #define	NAND_WP_GPIO	LPC32XX_GPIO(LPC32XX_GPO_P3_GRP, 19)
+@@ -198,29 +197,6 @@ struct clcd_board lpc32xx_clcd_data;
+ /* SPI LCDC device structure */
+ struct spi_device *ea3250_spi_lcd_dev = NULL;
+ 
+-/*
+- * Tick LED
+- */
+-static struct gpio_led phy_leds[] = {
+-	{
+-		.name			= "led0",
+-		.gpio			= LED_GPIO,
+-		.active_low		= 1,
+-		.default_trigger	= "heartbeat",
+-	},
+-};
+-
+-static struct gpio_led_platform_data led_data = {
+-	.leds = phy_leds,
+-	.num_leds = ARRAY_SIZE(phy_leds),
+-};
+-
+-static struct platform_device lpc32xx_gpio_led_device = {
+-	.name			= "leds-gpio",
+-	.id			= -1,
+-	.dev.platform_data	= &led_data,
+-};
+-
+ static struct pca9532_platform_data ea3250_leds = {
+ 	.leds = {
+ 	{ 	.type = PCA9532_TYPE_NONE }, /* Key 1 */
+@@ -1509,7 +1485,6 @@ static struct platform_device* ea3250_devs[] __initdata = {
+ 	&lpc32xx_i2c1_device,
+ 	&lpc32xx_i2c2_device,
+ 	&lpc32xx_watchdog_device,
+-	&lpc32xx_gpio_led_device,
+ 	&lpc32xx_rtc_device,
+ 	&lpc32xx_net_device,
+ #if defined(CONFIG_MTD_NAND_SLC_LPC32XX)
+-- 
+1.7.11.2
+
