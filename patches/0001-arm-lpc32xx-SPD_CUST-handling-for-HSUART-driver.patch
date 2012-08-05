@@ -1,0 +1,37 @@
+From afba2f2d44e994d1e9f24ed7c9e6218cbaf6e341 Mon Sep 17 00:00:00 2001
+From: Tobi Vollebregt <tobivollebregt@gmail.com>
+Date: Sun, 5 Aug 2012 09:50:12 +0200
+Subject: [PATCH] arm:lpc32xx: SPD_CUST handling for HSUART driver
+
+Note that the interaction with userspace may be confusing because
+baud_base is set to uartclk / 16, while the LPC32XX HSUART baud rate
+is calculated as uartclk / (14 * (divisor + 1)).
+
+Signed-off-by: Tobi Vollebregt <tobivollebregt@gmail.com>
+---
+ drivers/tty/serial/lpc32xx_hs.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/tty/serial/lpc32xx_hs.c b/drivers/tty/serial/lpc32xx_hs.c
+index e1bcf2d..8e82db8 100644
+--- a/drivers/tty/serial/lpc32xx_hs.c
++++ b/drivers/tty/serial/lpc32xx_hs.c
+@@ -519,7 +519,14 @@ static void serial_lpc32xx_set_termios(struct uart_port *port,
+ 
+ 	baud = uart_get_baud_rate(port, termios, old, 0,
+ 		(port->uartclk / 14));
+-	quot = __serial_get_clock_div(port->uartclk, baud);
++
++	/*
++	 * Old custom speed handling.
++	 */
++	if (baud == 38400 && (port->flags & UPF_SPD_MASK) == UPF_SPD_CUST)
++		quot = port->custom_divisor;
++	else
++		quot = __serial_get_clock_div(port->uartclk, baud);
+ 
+ 	spin_lock_irqsave(&port->lock, flags);
+ 
+-- 
+1.7.11.2
+
