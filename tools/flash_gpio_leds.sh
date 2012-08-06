@@ -1,6 +1,8 @@
 #!/bin/bash
 # Author: Tobi Vollebregt
 
+set -e
+
 GPIO=/sys/class/gpio
 LED3=$GPIO/p2.10
 LED4=$GPIO/p2.11

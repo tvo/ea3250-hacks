@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+# Author: Tobi Vollebregt
+
 import serial, lpc32xx_serial
 
 for baud in (9600, 31250):

@@ -1,6 +1,8 @@
 #!/bin/bash
 # Author: Tobi Vollebregt
 
+set -e
+
 while true; do
 	x=`cat /sys/devices/platform/lpc32xx-adc/adin0`
 	y=`cat /sys/devices/platform/lpc32xx-adc/adin1`

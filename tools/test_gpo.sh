@@ -1,6 +1,8 @@
 #!/bin/bash
 # Author: Tobi Vollebregt
 
+set -e
+
 if [ x"$1" = x"" ] || [ x"$2" = x"" ]; then
 	echo "Usage: $0 <pin id> <pin name>"
 	exit 0
