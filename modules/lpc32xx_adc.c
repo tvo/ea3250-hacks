@@ -18,13 +18,17 @@
 #define LPC32XX_ADC_CTRL_AD_PDN_CTRL    _BIT(2)
 #define LPC32XX_ADC_CTRL_AD_STROBE      _BIT(1)
 #define LPC32XX_ADC_VALUE_MASK          0x3ff
-#define LPC32XX_SIC1_RSR_ADC_INT	_BIT(7)
+#define LPC32XX_SIC1_RSR_ADC_INT        _BIT(7)
+
+#define LPC32XX_ADC_CLK_MAX_SPEED       4500000
 
 #define MOD_NAME "lpc32xx-adc"
 
 /* Core */
 
 static DEFINE_SPINLOCK(adc_lock);
+static int pclk_rate;
+static int osc_32KHz_rate;
 
 static int adc(int source) {
 	u32 tmp;
@@ -69,10 +73,10 @@ static int adc_get_speed(void) {
 
 	if (tmp & _BIT(8))
 		/* PERIPH clock */
-		tmp = 13000000 / ((tmp & 0xff) + 1);
+		tmp = pclk_rate / ((tmp & 0xff) + 1);
 	else
 		/* RTC clock */
-		tmp = 32768;
+		tmp = osc_32KHz_rate;
 
 	return tmp;
 }
@@ -81,24 +85,27 @@ static void adc_set_speed(int speed) {
 	u32 tmp, divisor;
 
 	/* Prevent division by zero */
-	if (speed < 32768)
-		speed = 32768;
+	if (speed < 0)
+		speed = 1;
 
-	divisor = (13000000 + speed / 2) / speed;
+	/* Bound to max rated speed */
+	if (speed > LPC32XX_ADC_CLK_MAX_SPEED)
+		speed = LPC32XX_ADC_CLK_MAX_SPEED;
+
+	divisor = (pclk_rate + speed / 2) / speed;
 
 	if (divisor > 256) {
-		if (abs(13000000 / 256 - speed) < abs(32768 - speed))
+		if (abs(pclk_rate / 256 - speed) < abs(osc_32KHz_rate - speed))
 			/* Use PERIPH_CLOCK with divisor of 256 */
 			tmp = 0x1ff;
 		else
-			/* Use RTC_CLOCK */
+			/* Use 32KHz clock */
 			tmp = 0;
 	}
 	else {
-		/* Lower divisor results in out-of-range speed (max 4.5 MHz) */
-		if (divisor < 3)
-			divisor = 3;
-		tmp = _BIT(8) | (divisor - 1);
+		if (divisor > 0)
+			--divisor;
+		tmp = _BIT(8) | divisor;
 	}
 
 	spin_lock(&adc_lock);
@@ -149,11 +156,25 @@ static ssize_t show_adc_value(struct device *dev, struct device_attribute *attr,
 static struct platform_device *lpc32xx_adc_device;
 
 static int __init lpc32xx_adc_probe(struct platform_device *pdev) {
+	struct clk *pclk;
+	struct clk *osc_32KHz;
 	int i, err;
 
 	/* Check if touch screen is enabled, bail out if it is */
 	if ((__raw_readl(LPC32XX_ADC_CTRL) & _BIT(0)) != 0)
 		return -EBUSY;
+
+	/* Get PERIPH_CLK rate */
+	pclk = clk_get(&pdev->dev, "pclk_ck");
+	if (IS_ERR(pclk))
+		return PTR_ERR(pclk);
+	pclk_rate = clk_get_rate(pclk);
+
+	/* Get 32KHz oscillator rate (formality, it is 32KHz...) */
+	osc_32KHz = clk_get(&pdev->dev, "osc_32KHz");
+	if (IS_ERR(osc_32KHz))
+		return PTR_ERR(osc_32KHz);
+	osc_32KHz_rate = clk_get_rate(osc_32KHz);
 
 	/* Set ADC negative and positive reference voltage
 	   (other settings in bits 9:6 are undefined) */
