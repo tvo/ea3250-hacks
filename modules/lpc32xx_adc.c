@@ -3,10 +3,12 @@
 #include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/fs.h>
+#include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <asm/io.h>
+#include <mach/irqs.h>
 #include <mach/hardware.h>
 #include <mach/platform.h>
 
@@ -32,9 +34,19 @@ static DEFINE_SPINLOCK(adc_lock);
 static int pclk_rate;
 static int osc_32KHz_rate;
 
+static irqreturn_t adc_irq_handler(int irq, void *dev_id) {
+	u32 tmp;
+
+	tmp = __raw_readl(LPC32XX_ADC_VALUE) & LPC32XX_ADC_VALUE_MASK;
+	printk(KERN_INFO "Handled ADC IRQ: %u\n", tmp);
+
+	return IRQ_HANDLED;
+}
+
 static int __init adc_init(void) {
 	struct clk *pclk;
 	struct clk *osc_32KHz;
+	int err;
 
 	/* Check if touch screen is enabled, bail out if it is */
 	if ((__raw_readl(LPC32XX_ADC_CTRL) & _BIT(0)) != 0) {
@@ -58,12 +70,27 @@ static int __init adc_init(void) {
 	}
 	osc_32KHz_rate = clk_get_rate(osc_32KHz);
 
+	/* Request ADC IRQ */
+	err = request_irq(IRQ_LPC32XX_TS_IRQ, &adc_irq_handler, 0, "TS_IRQ", NULL);
+	if (err != 0) {
+		printk(KERN_ERR "Error: Cannot request IRQ\n");
+		return err;
+	}
+
+	/* ADC interrupt is on by default. ??? */
+	disable_irq(IRQ_LPC32XX_TS_IRQ);
+
 	/* Set ADC negative and positive reference voltage
 	   (other settings in bits 9:6 are undefined) */
 	__raw_writel(__raw_readl(LPC32XX_ADC_SELECT) | _BIT(9) | _BIT(7),
 		LPC32XX_ADC_SELECT);
 
 	return 0;
+}
+
+static void __devexit adc_exit(void) {
+	/* Free ADC IRQ */
+	free_irq(IRQ_LPC32XX_TS_IRQ, NULL);
 }
 
 static int adc(int source) {
@@ -241,6 +268,7 @@ static int __init lpc32xx_adc_probe(struct platform_device *pdev) {
 			printk(KERN_ERR "Error: Cannot create device file\n");
 			while (--i >= 0)
 				device_remove_file(&pdev->dev, dev_attrs[i]);
+			adc_exit();
 			return err;
 		}
 	}
@@ -250,6 +278,7 @@ static int __init lpc32xx_adc_probe(struct platform_device *pdev) {
 }
 
 static int __devexit lpc32xx_adc_remove(struct platform_device *pdev) {
+	adc_exit();
 	lpc32xx_adc_device = NULL;
 	return 0;
 }
