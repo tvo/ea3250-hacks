@@ -27,7 +27,12 @@
 
 #define LPC32XX_ADC_CLK_MAX_SPEED       4500000
 
-/* 4096 bytes ~ 5ms single channel buffering at the highest speed */
+/* Size of small buffer filled in ISR before putting the data into the kfifo
+   and waking up processes.  512 bytes appears to be the fastest configuration. */
+#define BUFFER_SIZE                     512
+
+/* 4096 bytes ~ 5ms single channel buffering at the highest speed.
+   Note: this speed is never reached due to limits on interrupt latency etc.! */
 #define FIFO_SIZE                       4096
 
 #define MOD_NAME                        "lpc32xx-adc"
@@ -183,12 +188,12 @@ static struct kfifo fifo;
 static DECLARE_WAIT_QUEUE_HEAD(wait_queue);
 static bool channel_enabled[3] = {false, false, true};
 static int channel;
+static short buffer[BUFFER_SIZE];
+static int buffer_pos;
 
 static irqreturn_t adc_irq_handler(int irq, void *dev_id) {
-	u16 tmp;
-
 	/* Read result */
-	tmp = adc_finish();
+	buffer[buffer_pos++] = adc_finish();
 
 	/* Select next channel */
 	do
@@ -196,22 +201,26 @@ static irqreturn_t adc_irq_handler(int irq, void *dev_id) {
 			channel = 0;
 	while (!channel_enabled[channel]);
 
-	/* Store result */
-	if (kfifo_in(&fifo, &tmp, 2) == 2) {
-		/* Wake up processes blocking on our device node */
-		wake_up_interruptible(&wait_queue);
+	if (unlikely(buffer_pos == BUFFER_SIZE)) {
+		/* Store result */
+		if (kfifo_in(&fifo, buffer, sizeof(buffer)) == sizeof(buffer)) {
+			/* Wake up processes blocking on our device node */
+			wake_up_interruptible(&wait_queue);
 
-		/* Trigger new A/D conversion */
-		/* Be careful, calling this earlier appears to make the ADC
-		   re-raise the interrupt we just handled, thus saturating
-		   the kernel with interrupts and filling the fifo. */
-		adc_start(channel);
+			/* Trigger new A/D conversion */
+			adc_start(channel);
+		}
+		else
+			/* Buffer overflow kills the device node until reopened,
+			   because we don't start a new A/D conversion here.  This
+			   slightly protects the kernel against interrupt overload. */
+			printk(KERN_ERR "Error: Buffer overflow\n");
+
+		buffer_pos = 0;
 	}
 	else
-		/* Buffer overflow kills the device node until reopened,
-		   because we don't start a new A/D conversion here.  This
-		   slightly protects the kernel against interrupt overload. */
-		printk(KERN_ERR "Error: Buffer overflow\n");
+		/* Trigger new A/D conversion */
+		adc_start(channel);
 
 	return IRQ_HANDLED;
 }
@@ -235,6 +244,7 @@ static int device_open(struct inode *inode, struct file *file) {
 		device_is_open = false;
 		return err;
 	}
+	buffer_pos = 0;
 
 	/* Request ADC IRQ */
 	err = request_irq(IRQ_LPC32XX_TS_IRQ, &adc_irq_handler, 0, "TS_IRQ", NULL);
