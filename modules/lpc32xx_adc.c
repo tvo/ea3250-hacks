@@ -5,8 +5,10 @@
 #include <linux/fs.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
+#include <linux/kfifo.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/sched.h>
 #include <asm/io.h>
 #include <mach/irqs.h>
 #include <mach/hardware.h>
@@ -25,6 +27,9 @@
 
 #define LPC32XX_ADC_CLK_MAX_SPEED       4500000
 
+/* 4096 bytes ~ 5ms single channel buffering at the highest speed */
+#define FIFO_SIZE                       4096
+
 #define MOD_NAME                        "lpc32xx-adc"
 #define DEVICE_NAME                     "adc"
 
@@ -34,19 +39,9 @@ static DEFINE_SPINLOCK(adc_lock);
 static int pclk_rate;
 static int osc_32KHz_rate;
 
-static irqreturn_t adc_irq_handler(int irq, void *dev_id) {
-	u32 tmp;
-
-	tmp = __raw_readl(LPC32XX_ADC_VALUE) & LPC32XX_ADC_VALUE_MASK;
-	printk(KERN_INFO "Handled ADC IRQ: %u\n", tmp);
-
-	return IRQ_HANDLED;
-}
-
 static int __init adc_init(void) {
 	struct clk *pclk;
 	struct clk *osc_32KHz;
-	int err;
 
 	/* Check if touch screen is enabled, bail out if it is */
 	if ((__raw_readl(LPC32XX_ADC_CTRL) & _BIT(0)) != 0) {
@@ -70,16 +65,6 @@ static int __init adc_init(void) {
 	}
 	osc_32KHz_rate = clk_get_rate(osc_32KHz);
 
-	/* Request ADC IRQ */
-	err = request_irq(IRQ_LPC32XX_TS_IRQ, &adc_irq_handler, 0, "TS_IRQ", NULL);
-	if (err != 0) {
-		printk(KERN_ERR "Error: Cannot request IRQ\n");
-		return err;
-	}
-
-	/* ADC interrupt is on by default. ??? */
-	disable_irq(IRQ_LPC32XX_TS_IRQ);
-
 	/* Set ADC negative and positive reference voltage
 	   (other settings in bits 9:6 are undefined) */
 	__raw_writel(__raw_readl(LPC32XX_ADC_SELECT) | _BIT(9) | _BIT(7),
@@ -89,17 +74,15 @@ static int __init adc_init(void) {
 }
 
 static void __devexit adc_exit(void) {
-	/* Free ADC IRQ */
-	free_irq(IRQ_LPC32XX_TS_IRQ, NULL);
 }
 
-static int adc(int source) {
-	u32 tmp;
-
-	spin_lock(&adc_lock);
-
+static inline void adc_enable(void) {
 	/* Enable ADC clock */
 	__raw_writel(_BIT(0), LPC32XX_CLKPWR_ADC_CLK_CTRL);
+}
+
+static inline void adc_start(int source) {
+	u32 tmp;
 
 	/* Select ADC source */
 	tmp = __raw_readl(LPC32XX_ADC_SELECT);
@@ -109,19 +92,35 @@ static int adc(int source) {
 	/* Start AD conversion */
 	__raw_writel(LPC32XX_ADC_CTRL_AD_PDN_CTRL | LPC32XX_ADC_CTRL_AD_STROBE,
 		LPC32XX_ADC_CTRL);
+}
 
-	/* Busyloop until the conversion is complete
-	   (20..5000 iterations depending on ADC clock speed) */
-	while ((__raw_readl(LPC32XX_SIC1_RSR) & LPC32XX_SIC1_RSR_ADC_INT) == 0) ;
-
+static inline int adc_finish(void) {
 	/* Read value and mask out reserved (undefined) bits */
-	tmp = __raw_readl(LPC32XX_ADC_VALUE) & LPC32XX_ADC_VALUE_MASK;
+	return __raw_readl(LPC32XX_ADC_VALUE) & LPC32XX_ADC_VALUE_MASK;
+}
 
+static inline void adc_disable(void) {
 	/* Power down ADC */
 	__raw_writel(0, LPC32XX_ADC_CTRL);
 
 	/* Disable ADC clock */
 	__raw_writel(0, LPC32XX_CLKPWR_ADC_CLK_CTRL);
+}
+
+static int adc_single_shot(int source) {
+	int tmp;
+
+	spin_lock(&adc_lock);
+
+	adc_enable();
+	adc_start(source);
+
+	/* Busyloop until the conversion is complete
+	   (20..5000 iterations depending on ADC clock speed) */
+	while ((__raw_readl(LPC32XX_SIC1_RSR) & LPC32XX_SIC1_RSR_ADC_INT) == 0) ;
+
+	tmp = adc_finish();
+	adc_disable();
 
 	spin_unlock(&adc_lock);
 	return tmp;
@@ -180,8 +179,46 @@ static void adc_set_speed(int speed) {
 
 static int major;
 static bool device_is_open = 0;
+static struct kfifo fifo;
+static DECLARE_WAIT_QUEUE_HEAD(wait_queue);
+static bool channel_enabled[3] = {false, false, true};
+static int channel;
+
+static irqreturn_t adc_irq_handler(int irq, void *dev_id) {
+	u16 tmp;
+
+	/* Read result */
+	tmp = adc_finish();
+
+	/* Select next channel */
+	do
+		if (++channel == 3)
+			channel = 0;
+	while (!channel_enabled[channel]);
+
+	/* Store result */
+	if (kfifo_in(&fifo, &tmp, 2) == 2) {
+		/* Wake up processes blocking on our device node */
+		wake_up_interruptible(&wait_queue);
+
+		/* Trigger new A/D conversion */
+		/* Be careful, calling this earlier appears to make the ADC
+		   re-raise the interrupt we just handled, thus saturating
+		   the kernel with interrupts and filling the fifo. */
+		adc_start(channel);
+	}
+	else
+		/* Buffer overflow kills the device node until reopened,
+		   because we don't start a new A/D conversion here.  This
+		   slightly protects the kernel against interrupt overload. */
+		printk(KERN_ERR "Error: Buffer overflow\n");
+
+	return IRQ_HANDLED;
+}
 
 static int device_open(struct inode *inode, struct file *file) {
+	int err;
+
 	/* Device can only be open once */
 	if (device_is_open)
 		return -EBUSY;
@@ -190,19 +227,68 @@ static int device_open(struct inode *inode, struct file *file) {
 	/* Lock module until device is closed */
 	try_module_get(THIS_MODULE);
 
+	/* Allocate FIFO */
+	err = kfifo_alloc(&fifo, FIFO_SIZE, GFP_KERNEL);
+	if (err != 0) {
+		printk(KERN_ERR "Error: Cannot allocate kfifo\n");
+		module_put(THIS_MODULE);
+		device_is_open = false;
+		return err;
+	}
+
+	/* Request ADC IRQ */
+	err = request_irq(IRQ_LPC32XX_TS_IRQ, &adc_irq_handler, 0, "TS_IRQ", NULL);
+	if (err != 0) {
+		printk(KERN_ERR "Error: Cannot request IRQ\n");
+		kfifo_free(&fifo);
+		module_put(THIS_MODULE);
+		device_is_open = false;
+		return err;
+	}
+
+	/* ADC interrupt is on by default. ??? */
+	disable_irq(IRQ_LPC32XX_TS_IRQ);
+	enable_irq(IRQ_LPC32XX_TS_IRQ);
+
+	/* Start! */
+	channel = channel_enabled[0] ? 0 : (channel_enabled[1] ? 1 : 2);
+	adc_enable();
+	adc_start(channel);
+
 	return 0;
 }
 
 static int device_release(struct inode *inode, struct file *file) {
-	/* Release device and module */
-	device_is_open = false;
+	/* Disable ADC */
+	adc_disable();
+
+	/* Disable & free ADC IRQ */
+	disable_irq(IRQ_LPC32XX_TS_IRQ);
+	free_irq(IRQ_LPC32XX_TS_IRQ, NULL);
+
+	/* Free FIFO */
+	kfifo_free(&fifo);
+
+	/* Release module and device */
 	module_put(THIS_MODULE);
+	device_is_open = false;
 
 	return 0;
 }
 
-static ssize_t device_read(struct file *filp, char *buffer, size_t length, loff_t *offset) {
-	return 0;
+static ssize_t device_read(struct file *filp, char __user *buffer, size_t length, loff_t *offset) {
+	int err;
+	unsigned int n;
+
+	err = wait_event_interruptible(wait_queue, !kfifo_is_empty(&fifo));
+	if (err != 0)
+		return err;
+
+	err = kfifo_to_user(&fifo, buffer, length, &n);
+	if (err != 0)
+		return err;
+
+	return n;
 }
 
 static struct file_operations fops = {
@@ -218,6 +304,9 @@ static ssize_t show_adc_speed(struct device *dev, struct device_attribute *attr,
 }
 
 static ssize_t store_adc_speed(struct device *dev, struct device_attribute *attr, const char *buf, size_t count) {
+	if (device_is_open)
+		return -EBUSY;
+
 	adc_set_speed(simple_strtoul(buf, NULL, 0));
 	return count;
 }
@@ -240,11 +329,12 @@ static struct device_attribute *dev_attrs[] = {
 static ssize_t show_adc_value(struct device *dev, struct device_attribute *attr, char *buf) {
 	int i;
 
-	for (i = 0; dev_attrs[i] != NULL; ++i) {
-		if (attr == dev_attrs[i]) {
-			return scnprintf(buf, PAGE_SIZE, "%d", adc(i));
-		}
-	}
+	if (device_is_open)
+		return -EBUSY;
+
+	for (i = 0; dev_attrs[i] != NULL; ++i)
+		if (attr == dev_attrs[i])
+			return scnprintf(buf, PAGE_SIZE, "%d", adc_single_shot(i));
 
 	return -EINVAL;
 }
