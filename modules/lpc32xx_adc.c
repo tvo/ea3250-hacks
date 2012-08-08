@@ -22,13 +22,47 @@
 
 #define LPC32XX_ADC_CLK_MAX_SPEED       4500000
 
-#define MOD_NAME "lpc32xx-adc"
+#define MOD_NAME                        "lpc32xx-adc"
 
 /* Core */
 
 static DEFINE_SPINLOCK(adc_lock);
 static int pclk_rate;
 static int osc_32KHz_rate;
+
+static int __init adc_init(void) {
+	struct clk *pclk;
+	struct clk *osc_32KHz;
+
+	/* Check if touch screen is enabled, bail out if it is */
+	if ((__raw_readl(LPC32XX_ADC_CTRL) & _BIT(0)) != 0) {
+		printk(KERN_ERR "Error: Touch screen is using A/D converter\n");
+		return -EBUSY;
+	}
+
+	/* Get PERIPH_CLK rate */
+	pclk = clk_get(NULL, "pclk_ck");
+	if (IS_ERR(pclk)) {
+		printk(KERN_ERR "Error: Cannot get pclk_ck clock\n");
+		return PTR_ERR(pclk);
+	}
+	pclk_rate = clk_get_rate(pclk);
+
+	/* Get 32KHz oscillator rate (formality, it is 32KHz...) */
+	osc_32KHz = clk_get(NULL, "osc_32KHz");
+	if (IS_ERR(osc_32KHz)) {
+		printk(KERN_ERR "Error: Cannot get osc_32KHz clock\n");
+		return PTR_ERR(osc_32KHz);
+	}
+	osc_32KHz_rate = clk_get_rate(osc_32KHz);
+
+	/* Set ADC negative and positive reference voltage
+	   (other settings in bits 9:6 are undefined) */
+	__raw_writel(__raw_readl(LPC32XX_ADC_SELECT) | _BIT(9) | _BIT(7),
+		LPC32XX_ADC_SELECT);
+
+	return 0;
+}
 
 static int adc(int source) {
 	u32 tmp;
@@ -75,7 +109,7 @@ static int adc_get_speed(void) {
 		/* PERIPH clock */
 		tmp = pclk_rate / ((tmp & 0xff) + 1);
 	else
-		/* RTC clock */
+		/* 32KHz clock */
 		tmp = osc_32KHz_rate;
 
 	return tmp;
@@ -113,7 +147,7 @@ static void adc_set_speed(int speed) {
 	spin_unlock(&adc_lock);
 }
 
-/* Platform device */
+/* Platform device / sysfs interface */
 
 static ssize_t show_adc_speed(struct device *dev, struct device_attribute *attr, char *buf) {
 	return scnprintf(buf, PAGE_SIZE, "%d", adc_get_speed());
@@ -156,35 +190,18 @@ static ssize_t show_adc_value(struct device *dev, struct device_attribute *attr,
 static struct platform_device *lpc32xx_adc_device;
 
 static int __init lpc32xx_adc_probe(struct platform_device *pdev) {
-	struct clk *pclk;
-	struct clk *osc_32KHz;
 	int i, err;
 
-	/* Check if touch screen is enabled, bail out if it is */
-	if ((__raw_readl(LPC32XX_ADC_CTRL) & _BIT(0)) != 0)
-		return -EBUSY;
-
-	/* Get PERIPH_CLK rate */
-	pclk = clk_get(&pdev->dev, "pclk_ck");
-	if (IS_ERR(pclk))
-		return PTR_ERR(pclk);
-	pclk_rate = clk_get_rate(pclk);
-
-	/* Get 32KHz oscillator rate (formality, it is 32KHz...) */
-	osc_32KHz = clk_get(&pdev->dev, "osc_32KHz");
-	if (IS_ERR(osc_32KHz))
-		return PTR_ERR(osc_32KHz);
-	osc_32KHz_rate = clk_get_rate(osc_32KHz);
-
-	/* Set ADC negative and positive reference voltage
-	   (other settings in bits 9:6 are undefined) */
-	__raw_writel(__raw_readl(LPC32XX_ADC_SELECT) | _BIT(9) | _BIT(7),
-		LPC32XX_ADC_SELECT);
+	/* Initialize core */
+	err = adc_init();
+	if (err != 0)
+		return err;
 
 	/* Register device attributes */
 	for (i = 0; dev_attrs[i] != NULL; ++i) {
 		err = device_create_file(&pdev->dev, dev_attrs[i]);
 		if (err != 0) {
+			printk(KERN_ERR "Error: Cannot create device file\n");
 			while (--i >= 0)
 				device_remove_file(&pdev->dev, dev_attrs[i]);
 			return err;
@@ -214,8 +231,11 @@ static int __init lpc32xx_adc_init(void) {
 	struct platform_device *pdev;
 
 	pdev = platform_create_bundle(&lpc32xx_adc_driver, lpc32xx_adc_probe, NULL, 0, NULL, 0);
-	if (IS_ERR(pdev))
+	if (IS_ERR(pdev)) {
+		printk(KERN_ERR "Error: Cannot create platform bundle\n");
 		return PTR_ERR(pdev);
+	}
+
 	return 0;
 }
 
