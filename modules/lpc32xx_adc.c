@@ -2,6 +2,7 @@
 
 #include <linux/clk.h>
 #include <linux/err.h>
+#include <linux/fs.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
@@ -23,6 +24,7 @@
 #define LPC32XX_ADC_CLK_MAX_SPEED       4500000
 
 #define MOD_NAME                        "lpc32xx-adc"
+#define DEVICE_NAME                     "adc"
 
 /* Core */
 
@@ -147,6 +149,41 @@ static void adc_set_speed(int speed) {
 	spin_unlock(&adc_lock);
 }
 
+/* Character device interface */
+
+static int major;
+static bool device_is_open = 0;
+
+static int device_open(struct inode *inode, struct file *file) {
+	/* Device can only be open once */
+	if (device_is_open)
+		return -EBUSY;
+	device_is_open = true;
+
+	/* Lock module until device is closed */
+	try_module_get(THIS_MODULE);
+
+	return 0;
+}
+
+static int device_release(struct inode *inode, struct file *file) {
+	/* Release device and module */
+	device_is_open = false;
+	module_put(THIS_MODULE);
+
+	return 0;
+}
+
+static ssize_t device_read(struct file *filp, char *buffer, size_t length, loff_t *offset) {
+	return 0;
+}
+
+static struct file_operations fops = {
+	.read = device_read,
+	.open = device_open,
+	.release = device_release
+};
+
 /* Platform device / sysfs interface */
 
 static ssize_t show_adc_speed(struct device *dev, struct device_attribute *attr, char *buf) {
@@ -230,16 +267,33 @@ static struct platform_driver lpc32xx_adc_driver = {
 static int __init lpc32xx_adc_init(void) {
 	struct platform_device *pdev;
 
+	/* Register platform driver and platform device */
 	pdev = platform_create_bundle(&lpc32xx_adc_driver, lpc32xx_adc_probe, NULL, 0, NULL, 0);
 	if (IS_ERR(pdev)) {
 		printk(KERN_ERR "Error: Cannot create platform bundle\n");
 		return PTR_ERR(pdev);
 	}
 
+	/* Register character device */
+	major = register_chrdev(0, DEVICE_NAME, &fops);
+	if (major < 0) {
+		printk(KERN_ERR "Error: Cannot register character device\n");
+		platform_device_unregister(lpc32xx_adc_device);
+		platform_driver_unregister(&lpc32xx_adc_driver);
+		return major;
+	}
+
+	printk(KERN_INFO "Registered character device with major number %d\n", major);
+	printk(KERN_INFO "Create a device file with: mknod /dev/%s c %d 0\n", DEVICE_NAME, major);
+
 	return 0;
 }
 
 static void __exit lpc32xx_adc_exit(void) {
+	/* Unregister character device */
+	unregister_chrdev(major, DEVICE_NAME);
+
+	/* Unregister platform driver and platform device */
 	platform_device_unregister(lpc32xx_adc_device);
 	platform_driver_unregister(&lpc32xx_adc_driver);
 }
