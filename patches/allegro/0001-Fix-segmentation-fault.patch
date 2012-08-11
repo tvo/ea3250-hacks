@@ -1,0 +1,31 @@
+From 605e6be8db2a8ed459ad3155049b95de47b410c4 Mon Sep 17 00:00:00 2001
+From: Tobi Vollebregt <tobivollebregt@gmail.com>
+Date: Sat, 11 Aug 2012 23:41:44 +0200
+Subject: [PATCH] Fix segmentation fault
+
+---
+ src/graphics.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/src/graphics.c b/src/graphics.c
+index d2403d7..e66bae7 100644
+--- a/src/graphics.c
++++ b/src/graphics.c
+@@ -657,9 +657,11 @@ static int _set_gfx_mode(int card, int w, int h, int v_w, int v_h, int allow_con
+       while (vram_bitmap_list)
+ 	 destroy_bitmap(vram_bitmap_list->bmp);
+ 
+-      bmp_read_line(screen, 0);
+-      bmp_write_line(screen, 0);
+-      bmp_unwrite_line(screen);
++      if (screen) {
++	 bmp_read_line(screen, 0);
++	 bmp_write_line(screen, 0);
++	 bmp_unwrite_line(screen);
++      }
+ 
+       if (gfx_driver->scroll)
+ 	 gfx_driver->scroll(0, 0);
+-- 
+1.7.11.2
+

@@ -1,0 +1,26 @@
+From 11a4bc3a059b3041c9242f568b4bdae784ce0134 Mon Sep 17 00:00:00 2001
+From: Tobi Vollebregt <tobivollebregt@gmail.com>
+Date: Sat, 11 Aug 2012 23:41:28 +0200
+Subject: [PATCH] Don't try to open /dev/console, it won't work
+
+(VT_GETSTATE ioctl will fail on it later on)
+---
+ src/linux/lconsole.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/linux/lconsole.c b/src/linux/lconsole.c
+index 36328e2..654a66a 100644
+--- a/src/linux/lconsole.c
++++ b/src/linux/lconsole.c
+@@ -118,7 +118,7 @@ static int init_console(void)
+        * opening each unused one in turn.
+        */
+ 
+-      if ((console_fd = open ("/dev/console", O_WRONLY)) < 0) {
++      if (TRUE || (console_fd = open ("/dev/console", O_WRONLY)) < 0) {
+ 	 int n;
+ 	 uszprintf (allegro_error, ALLEGRO_ERROR_SIZE, uconvert_ascii("%s /dev/console: %s", tmp),
+ 		    get_config_text("Unable to open"), ustrerror (errno));
+-- 
+1.7.11.2
+
