@@ -2,7 +2,7 @@
 
 #define DEBUGMODE
 #include <allegro.h>
-#include "lib/gpio.h"
+#include "lib/gpio/gpio.h"
 
 void wait() {
 	char buf[2];
