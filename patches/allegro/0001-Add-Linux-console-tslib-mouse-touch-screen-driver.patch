@@ -1,0 +1,316 @@
+From eddb35dd5b381bb4c9aec78c9b372a2dbc7dd683 Mon Sep 17 00:00:00 2001
+From: Tobi Vollebregt <tobivollebregt@gmail.com>
+Date: Sun, 12 Aug 2012 23:01:24 +0200
+Subject: [PATCH] Add Linux console tslib mouse "touch screen" driver
+
+No support for get_mickeys or set_speed; these don't make much sense for
+a touch screen input. (get_mickeys could be emulated though)
+
+Example allegro.cfg:
+
+    [mouse]
+    mouse=TSLI
+    mouse_device=/dev/input/event0
+---
+ CMakeLists.txt                            |  12 +++
+ cmake/FileList.cmake                      |   1 +
+ cmake/FindTslib.cmake                     |  20 ++++
+ include/allegro/platform/alunix.h         |   2 +
+ include/allegro/platform/alunixac.h.cmake |   3 +
+ src/linux/lmsedrv.c                       |   4 +-
+ src/linux/tslib.c                         | 165 ++++++++++++++++++++++++++++++
+ 7 files changed, 206 insertions(+), 1 deletion(-)
+ create mode 100644 cmake/FindTslib.cmake
+ create mode 100644 src/linux/tslib.c
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8973857..fd883fc 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -538,6 +538,7 @@ option(WANT_LINUX_CONSOLE "Want Linux console support (Linux)" off)
+ option(WANT_LINUX_VGA "Want Linux console VGA driver (Linux)" on)
+ option(WANT_LINUX_FBCON "Want Linux console fbcon driver (Linux)" on)
+ option(WANT_LINUX_SVGALIB "Want Linux console SVGAlib driver (Linux)" on)
++option(WANT_LINUX_TSLIB "Want Linux console tslib mouse driver (Linux)" on)
+ 
+ if(WANT_LINUX_CONSOLE AND CMAKE_SYSTEM_NAME STREQUAL Linux)
+     set(ALLEGRO_LINUX 1)
+@@ -582,6 +583,17 @@ if(WANT_LINUX_CONSOLE AND CMAKE_SYSTEM_NAME STREQUAL Linux)
+                 ${SVGALIB_LIBRARY})
+         endif()
+     endif()
++
++    if(WANT_LINUX_TSLIB)
++        find_package(Tslib)
++        if(TSLIB_FOUND)
++            set(ALLEGRO_LINUX_TSLIB 1)
++            include_directories(SYSTEM ${TSLIB_INCLUDE_DIR})
++            set(CMAKE_REQUIRED_LIBRARIES ${TSLIB_LIBRARY})
++            list(APPEND PLATFORM_LIBS_NON_MODULES ${TSLIB_LIBRARY})
++            add_our_module(alleg-tslib src/linux/tslib.c ${TSLIB_LIBRARY})
++        endif()
++    endif()
+ endif(WANT_LINUX_CONSOLE AND CMAKE_SYSTEM_NAME STREQUAL Linux)
+ 
+ # -- Windows --
+diff --git a/cmake/FileList.cmake b/cmake/FileList.cmake
+index 5604958..8e38a04 100644
+--- a/cmake/FileList.cmake
++++ b/cmake/FileList.cmake
+@@ -245,6 +245,7 @@ set(ALLEGRO_SRC_LINUX_FILES
+         src/linux/lvgahelp.c
+         src/linux/svgalib.c
+         src/linux/svgalibs.s
++        src/linux/tslib.c
+         src/linux/vtswitch.c
+         src/misc/vbeaf.c
+         src/misc/vbeafs.s
+diff --git a/cmake/FindTslib.cmake b/cmake/FindTslib.cmake
+new file mode 100644
+index 0000000..e7605c1
+--- /dev/null
++++ b/cmake/FindTslib.cmake
+@@ -0,0 +1,20 @@
++# - Find tslib
++#
++#  TSLIB_INCLUDE_DIR - where to find tslib.h.
++#  TSLIB_LIBRARIES   - List of libraries when using tslib.
++#  TSLIB_FOUND       - True if tslib found.
++
++if(TSLIB_INCLUDE_DIR)
++    # Already in cache, be silent
++    set(TSLIB_FIND_QUIETLY TRUE)
++endif(TSLIB_INCLUDE_DIR)
++find_path(TSLIB_INCLUDE_DIR tslib.h)
++find_library(TSLIB_LIBRARY NAMES ts)
++# Handle the QUIETLY and REQUIRED arguments and set TSLIB_FOUND
++# to TRUE if all listed variables are TRUE.
++include(FindPackageHandleStandardArgs)
++find_package_handle_standard_args(TSLIB DEFAULT_MSG
++    TSLIB_INCLUDE_DIR TSLIB_LIBRARY)
++
++mark_as_advanced(TSLIB_INCLUDE_DIR)
++mark_as_advanced(TSLIB_LIBRARY)
+diff --git a/include/allegro/platform/alunix.h b/include/allegro/platform/alunix.h
+index c0196f5..dad8187 100644
+--- a/include/allegro/platform/alunix.h
++++ b/include/allegro/platform/alunix.h
+@@ -178,6 +178,7 @@ AL_VAR(GFX_DRIVER, gfx_xdga2_soft);
+ #define MOUSEDRV_LINUX_MS        AL_ID('M','S',' ',' ')
+ #define MOUSEDRV_LINUX_IMS       AL_ID('I','M','S',' ')
+ #define MOUSEDRV_LINUX_EVDEV     AL_ID('E','V',' ',' ')
++#define MOUSEDRV_LINUX_TSLIB     AL_ID('T','S','L','I')
+ 
+ #define JOY_TYPE_LINUX_ANALOGUE  AL_ID('L','N','X','A')
+ 
+@@ -214,6 +215,7 @@ AL_VAR(MOUSE_DRIVER, mousedrv_linux_gpmdata);
+ AL_VAR(MOUSE_DRIVER, mousedrv_linux_ms);
+ AL_VAR(MOUSE_DRIVER, mousedrv_linux_ims);
+ AL_VAR(MOUSE_DRIVER, mousedrv_linux_evdev);
++AL_VAR(MOUSE_DRIVER, mousedrv_linux_tslib);
+ 
+ AL_FUNC_DEPRECATED(void, split_modex_screen, (int lyne));
+ 
+diff --git a/include/allegro/platform/alunixac.h.cmake b/include/allegro/platform/alunixac.h.cmake
+index 5adb3aa..6a91345 100644
+--- a/include/allegro/platform/alunixac.h.cmake
++++ b/include/allegro/platform/alunixac.h.cmake
+@@ -123,6 +123,9 @@
+ /* Define to enable Linux console VGA driver. */
+ #cmakedefine ALLEGRO_LINUX_VGA
+ 
++/* Define to enable Linux console tslib mouse driver. */
++#cmakedefine ALLEGRO_LINUX_TSLIB
++
+ /*---------------------------------------------------------------------------*/
+ 
+ /* Define to the installed ALSA version. */
+diff --git a/src/linux/lmsedrv.c b/src/linux/lmsedrv.c
+index ce2bfbf..0cc7bb8 100644
+--- a/src/linux/lmsedrv.c
++++ b/src/linux/lmsedrv.c
+@@ -31,7 +31,9 @@ _DRIVER_INFO _linux_mouse_driver_list[] =
+ #ifdef ALLEGRO_HAVE_LINUX_INPUT_H
+    {  MOUSEDRV_LINUX_EVDEV,    &mousedrv_linux_evdev,    TRUE  },
+ #endif
++#ifdef ALLEGRO_LINUX_TSLIB
++   {  MOUSEDRV_LINUX_TSLIB,    &mousedrv_linux_tslib,    TRUE  },
++#endif
+    {  MOUSEDRV_NONE,           &mousedrv_none,           TRUE  },
+    {  0,                       NULL,                     0     }
+ };
+-
+diff --git a/src/linux/tslib.c b/src/linux/tslib.c
+new file mode 100644
+index 0000000..36b8b60
+--- /dev/null
++++ b/src/linux/tslib.c
+@@ -0,0 +1,165 @@
++/*         ______   ___    ___
++ *        /\  _  \ /\_ \  /\_ \
++ *        \ \ \L\ \\//\ \ \//\ \      __     __   _ __   ___
++ *         \ \  __ \ \ \ \  \ \ \   /'__`\ /'_ `\/\`'__\/ __`\
++ *          \ \ \/\ \ \_\ \_ \_\ \_/\  __//\ \L\ \ \ \//\ \L\ \
++ *           \ \_\ \_\/\____\/\____\ \____\ \____ \ \_\\ \____/
++ *            \/_/\/_/\/____/\/____/\/____/\/___L\ \/_/ \/___/
++ *                                           /\____/
++ *                                           \_/__/
++ *
++ *      Linux console mouse driver for tslib (touch screens).
++ *
++ *      By Tobi Vollebregt.
++ *
++ *      See readme.txt for copyright information.
++ */
++
++#include "allegro.h"
++#include "allegro/internal/aintern.h"
++
++#include <stdio.h>
++#include <tslib.h>
++
++#define PREFIX_I                "al-tslib INFO: "
++#define PREFIX_W                "al-tslib WARNING: "
++#define PREFIX_E                "al-tslib ERROR: "
++
++#define ARRAY_SIZE(a)           ((int)sizeof((a)) / (int)sizeof((a)[0]))
++
++static struct tsdev *ts;
++
++static int mouse_minx = 0;          /* mouse range */
++static int mouse_miny = 0;
++static int mouse_maxx = 319;
++static int mouse_maxy = 199;
++
++
++static int al_tslib_error_callback(const char *fmt, va_list ap)
++{
++   char tmp[ALLEGRO_ERROR_SIZE];
++   int ret;
++
++   ret = vsnprintf(tmp, sizeof(tmp), fmt, ap);
++
++   TRACE(PREFIX_E "%s\n", tmp);
++   uconvert(tmp, U_ASCII, allegro_error, U_CURRENT, ALLEGRO_ERROR_SIZE);
++
++   return ret;
++}
++
++static int mouse_init(void)
++{
++   char tmp1[128], tmp2[128];
++   AL_CONST char *udevice;
++
++   /* Set custom error handling function */
++   ts_error_fn = al_tslib_error_callback;
++
++   /* Find the device filename */
++   udevice = get_config_string(uconvert_ascii("mouse", tmp1),
++                               uconvert_ascii("mouse_device", tmp2),
++                               NULL);
++
++   /* Open mouse device.  Devices are cool. */
++   if (udevice) {
++      TRACE(PREFIX_I "Trying %s device\n", udevice);
++      ts = ts_open(uconvert_toascii(udevice, tmp1), TRUE);
++      if (ts == NULL) {
++         uszprintf(allegro_error, ALLEGRO_ERROR_SIZE, get_config_text("Unable to open %s: %s"),
++                   udevice, ustrerror(errno));
++         return -1;
++      }
++   }
++   else {
++      /* If not specified in the config file, try several /dev/input/event<n>
++       * devices. */
++      const char *device_name[] = { "/dev/input/event0",
++                                    "/dev/input/event1",
++                                    "/dev/input/event2",
++                                    "/dev/input/event3",
++                                    NULL };
++      int i;
++
++      TRACE(PREFIX_I "Trying /dev/input/event[0-3] devices\n");
++
++      for (i=0; device_name[i]; i++) {
++         ts = ts_open(device_name[i], TRUE);
++         if (ts != NULL)
++	    break;
++      }
++
++      if (!device_name[i]) {
++	 uszprintf(allegro_error, ALLEGRO_ERROR_SIZE, get_config_text("Unable to open a touch screen device: %s"),
++		   ustrerror(errno));
++	 return -1;
++      }
++   }
++
++   if (ts_config(ts)) {
++      uszprintf(allegro_error, ALLEGRO_ERROR_SIZE, get_config_text("Unable to configure touch screen device: %s"),
++                ustrerror(errno));
++      ts_close(ts);
++      return -1;
++   }
++
++   return 0;
++}
++
++static void mouse_exit(void)
++{
++   if (ts) {
++      ts_close(ts);
++      ts = NULL;
++   }
++}
++
++static void mouse_position(int x, int y)
++{
++   _mouse_x = CLAMP(mouse_minx, x, mouse_maxx);
++   _mouse_y = CLAMP(mouse_miny, y, mouse_maxy);
++}
++
++static void mouse_set_range(int x1, int y1, int x2, int y2)
++{
++   mouse_minx = x1;
++   mouse_miny = y1;
++   mouse_maxx = x2;
++   mouse_maxy = y2;
++
++   mouse_position(_mouse_x, _mouse_y);
++}
++
++static void mouse_timer_poll(void)
++{
++   struct ts_sample samp[16];
++   int n;
++
++   n = ts_read(ts, samp, ARRAY_SIZE(samp));
++   if (n > 0) {
++      --n;
++      mouse_position(samp[n].x, samp[n].y);
++      _mouse_b = samp[n].pressure > 0;
++      /*TRACE(PREFIX_I "Read %d samples.  x:%3d y:%3d pressure:%3d\n",
++	      n + 1, samp[n].x, samp[n].y, samp[n].pressure);*/
++   }
++}
++
++MOUSE_DRIVER mousedrv_linux_tslib =
++{
++   MOUSEDRV_LINUX_TSLIB,
++   empty_string,
++   empty_string,
++   "Linux tslib touch screen",
++   mouse_init,
++   mouse_exit,
++   NULL, /* poll */
++   mouse_timer_poll,
++   mouse_position,
++   mouse_set_range,
++   NULL, /* set_speed */
++   NULL, /* get_mickeys */
++   NULL, /* analyse_data */
++   NULL, /* enable_hardware_cursor */
++   NULL, /* select_system_cursor */
++};
+-- 
+1.7.11.2
+
