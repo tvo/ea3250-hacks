@@ -1,9 +1,18 @@
 /* Author: Tobi Vollebregt */
 
 #include "gpio.h"
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
-#define ARRAY_SIZE(x) ((int)(sizeof(x) / sizeof(x[0])))
+#define ARRAY_SIZE(x)                   ((int)(sizeof(x) / sizeof(x[0])))
+#define TRACE(...)
+
+#define SYSFS_GPIO                      "/sys/class/gpio"
+#define SYSFS_GPIO_EXPORT               SYSFS_GPIO "/export"
+#define SYSFS_GPIO_UNEXPORT             SYSFS_GPIO "/unexport"
 
 /* Names taken from arch/arm/mach-lpc32xx/gpiolib.c */
 static const char *const gpio_names[] = {
@@ -128,6 +137,81 @@ const char* gpio_idx_to_name(int idx) {
 		return NULL;
 
 	return gpio_names[idx];
+}
+
+int gpio_open(const char *name, int flags) {
+	int idx, size, fd;
+	char buf[256];
+
+	/* Map name to index */
+	idx = gpio_name_to_idx(name);
+	if (idx < 0) {
+		errno = ENOENT;
+		return -1;
+	}
+
+	/* Export the GPIO pin */
+	fd = open(SYSFS_GPIO_EXPORT, O_WRONLY | O_TRUNC);
+	if (fd < 0) {
+		TRACE("failed to open %s\n", SYSFS_GPIO_EXPORT);
+		return -1;
+	}
+	size = snprintf(buf, sizeof(buf), "%d", idx);
+	if (write(fd, buf, size) < 0) {
+		TRACE("failed to write to %s\n", SYSFS_GPIO_EXPORT);
+		return -1;
+	}
+	if (close(fd) < 0) {
+		TRACE("failed to close %s\n", SYSFS_GPIO_EXPORT);
+		return -1;
+	}
+
+	/* Open the `value' device attribute of the GPIO pin */
+	snprintf(buf, sizeof(buf), "%s/%s/value", SYSFS_GPIO, name);
+	fd = open(buf, flags);
+	if (fd < 0) {
+		TRACE("failed to open %s\n", buf);
+		return -1;
+	}
+
+	return fd;
+}
+
+int gpio_close(const char *name, int fd) {
+	int ret = 0, idx, size;
+	char buf[256];
+
+	/* Close the `value' device attribute of the GPIO pin */
+	if (close(fd) < 0) {
+		TRACE("failed to close %s/%s/value", SYSFS_GPIO, name);
+		ret = -1;
+		/* Continue, we might still be able to unexport the GPIO... */
+	}
+
+	/* Map name to index */
+	idx = gpio_name_to_idx(name);
+	if (idx < 0) {
+		errno = ENOENT;
+		return -1;
+	}
+
+	/* Unexport the GPIO pin */
+	fd = open(SYSFS_GPIO_UNEXPORT, O_WRONLY | O_TRUNC);
+	if (fd < 0) {
+		TRACE("failed to open %s\n", SYSFS_GPIO_UNEXPORT);
+		return -1;
+	}
+	size = snprintf(buf, sizeof(buf), "%d", idx);
+	if (write(fd, buf, size) < 0) {
+		TRACE("failed to write to %s\n", SYSFS_GPIO_UNEXPORT);
+		return -1;
+	}
+	if (close(fd) < 0) {
+		TRACE("failed to close %s\n", SYSFS_GPIO_UNEXPORT);
+		return -1;
+	}
+
+	return ret;
 }
 
 #ifdef TEST
