@@ -29,3 +29,6 @@ Allegro
 
  * init_console segfaults during exit(0) after fork
    https://sourceforge.net/tracker/?func=detail&aid=3556662&group_id=5665&atid=105665
+
+ * tslib touch screen driver for Linux console system
+   https://sourceforge.net/tracker/?func=detail&aid=3556791&group_id=5665&atid=305665
