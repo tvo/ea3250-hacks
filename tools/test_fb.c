@@ -1,5 +1,5 @@
 /* Author: Tobi Vollebregt */
-#include "lib/fbutils.h"
+#include "lib/fbutils/fbutils.h"
 #include <stdio.h>
 
 int main() {
