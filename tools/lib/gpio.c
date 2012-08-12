@@ -122,7 +122,7 @@ static const char *const gpio_names[] = {
 	"gpo23",
 };
 
-int gpio_name_to_idx(const char* name) {
+int gpio_name_to_index(const char* name) {
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(gpio_names); ++i)
@@ -132,20 +132,20 @@ int gpio_name_to_idx(const char* name) {
 	return -1;
 }
 
-const char* gpio_idx_to_name(int idx) {
-	if (idx < 0 || idx >= ARRAY_SIZE(gpio_names))
+const char* gpio_index_to_name(int index) {
+	if (index < 0 || index >= ARRAY_SIZE(gpio_names))
 		return NULL;
 
-	return gpio_names[idx];
+	return gpio_names[index];
 }
 
 int gpio_open(const char *name, int flags) {
-	int idx, size, fd;
+	int index, size, fd;
 	char buf[256];
 
 	/* Map name to index */
-	idx = gpio_name_to_idx(name);
-	if (idx < 0) {
+	index = gpio_name_to_index(name);
+	if (index < 0) {
 		errno = ENOENT;
 		return -1;
 	}
@@ -156,7 +156,7 @@ int gpio_open(const char *name, int flags) {
 		TRACE("failed to open %s\n", SYSFS_GPIO_EXPORT);
 		return -1;
 	}
-	size = snprintf(buf, sizeof(buf), "%d", idx);
+	size = snprintf(buf, sizeof(buf), "%d", index);
 	if (write(fd, buf, size) < 0) {
 		TRACE("failed to write to %s\n", SYSFS_GPIO_EXPORT);
 		return -1;
@@ -178,7 +178,7 @@ int gpio_open(const char *name, int flags) {
 }
 
 int gpio_close(const char *name, int fd) {
-	int ret = 0, idx, size;
+	int ret = 0, index, size;
 	char buf[256];
 
 	/* Close the `value' device attribute of the GPIO pin */
@@ -189,8 +189,8 @@ int gpio_close(const char *name, int fd) {
 	}
 
 	/* Map name to index */
-	idx = gpio_name_to_idx(name);
-	if (idx < 0) {
+	index = gpio_name_to_index(name);
+	if (index < 0) {
 		errno = ENOENT;
 		return -1;
 	}
@@ -201,7 +201,7 @@ int gpio_close(const char *name, int fd) {
 		TRACE("failed to open %s\n", SYSFS_GPIO_UNEXPORT);
 		return -1;
 	}
-	size = snprintf(buf, sizeof(buf), "%d", idx);
+	size = snprintf(buf, sizeof(buf), "%d", index);
 	if (write(fd, buf, size) < 0) {
 		TRACE("failed to write to %s\n", SYSFS_GPIO_UNEXPORT);
 		return -1;
@@ -218,13 +218,13 @@ int gpio_close(const char *name, int fd) {
 #include <stdio.h>
 
 int main() {
-	int idx = gpio_name_to_idx("p2.10");
+	int index = gpio_name_to_index("p2.10");
 
-	printf("p2.10 = %d\n", idx);
-	printf("%d = %s\n", idx, gpio_idx_to_name(idx));
+	printf("p2.10 = %d\n", index);
+	printf("%d = %s\n", index, gpio_index_to_name(index));
 
-	printf("foo = %d\n", gpio_name_to_idx("foo"));
-	printf("%d = %s\n", ARRAY_SIZE(gpio_names), gpio_idx_to_name(ARRAY_SIZE(gpio_names)));
+	printf("foo = %d\n", gpio_name_to_index("foo"));
+	printf("%d = %s\n", ARRAY_SIZE(gpio_names), gpio_index_to_name(ARRAY_SIZE(gpio_names)));
 
 	return 0;
 }
