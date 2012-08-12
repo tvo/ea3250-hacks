@@ -2,31 +2,20 @@
 
 #define DEBUGMODE
 #include <allegro.h>
+#include "lib/gpio.h"
 
 void wait() {
 	char buf[2];
 	int fd;
 
-	/* Export GPI_01 */
-	fd = open("/sys/class/gpio/export", O_WRONLY | O_TRUNC);
+	/* Export and open GPI_01 */
+	fd = gpio_open("gpi01", O_RDONLY);
 	if (fd < 0) {
-		TRACE("failed to open /sys/class/gpio/export\n");
-		exit(1);
-	}
-	if (write(fd, "52\n", 3) < 0) {
-		TRACE("failed to write to /sys/class/gpio/export\n");
-		exit(1);
-	}
-	close(fd);
-
-	/* Poll GPI_01 for button press */
-	fd = open("/sys/class/gpio/gpi01/value", O_RDONLY);
-	if (fd < 0) {
-		TRACE("failed to open /sys/class/gpio/gpi01/value\n");
+		TRACE("gpio_open failed\n");
 		exit(1);
 	}
 
-	/* Wait while it's still pressed */
+	/* Poll GPI_01 as long as it is pressed */
 	do {
 		rest(50);
 		if (pread(fd, buf, sizeof(buf), 0) < 0) {
@@ -35,7 +24,7 @@ void wait() {
 		}
 	} while (buf[0] == '0');
 
-	/* Poll for next press */
+	/* Poll GPI_01 until it is pressed */
 	do {
 		rest(50);
 		if (pread(fd, buf, sizeof(buf), 0) < 0) {
@@ -44,19 +33,11 @@ void wait() {
 		}
 	} while (buf[0] == '1');
 
-	close(fd);
-
-	/* Unexport GPI_01 */
-	fd = open("/sys/class/gpio/unexport", O_WRONLY | O_TRUNC);
-	if (fd < 0) {
-		TRACE("failed to open /sys/class/gpio/unexport\n");
+	/* Close and unexport GPI_01 */
+	if (gpio_close("gpi01", fd) < 0) {
+		TRACE("gpio_close failed\n");
 		exit(1);
 	}
-	if (write(fd, "52\n", 3) < 0) {
-		TRACE("failed to write to /sys/class/gpio/unexport\n");
-		exit(1);
-	}
-	close(fd);
 }
 
 int main() {
