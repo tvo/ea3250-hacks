@@ -1,10 +1,13 @@
-From eddb35dd5b381bb4c9aec78c9b372a2dbc7dd683 Mon Sep 17 00:00:00 2001
+From 4b7ded4a061c7a38971dfaaedb635b71e981df79 Mon Sep 17 00:00:00 2001
 From: Tobi Vollebregt <tobivollebregt@gmail.com>
-Date: Sun, 12 Aug 2012 23:01:24 +0200
+Date: Mon, 13 Aug 2012 13:15:56 +0200
 Subject: [PATCH] Add Linux console tslib mouse "touch screen" driver
 
 No support for get_mickeys or set_speed; these don't make much sense for
 a touch screen input. (get_mickeys could be emulated though)
+
+Pressure input of the touch screen is currently discarded.
+Should this be put into mouse_w or higher bits of mouse_b perhaps?
 
 Example allegro.cfg:
 
@@ -12,19 +15,19 @@ Example allegro.cfg:
     mouse=TSLI
     mouse_device=/dev/input/event0
 ---
- CMakeLists.txt                            |  12 +++
+ CMakeLists.txt                            |  11 ++
  cmake/FileList.cmake                      |   1 +
  cmake/FindTslib.cmake                     |  20 ++++
  include/allegro/platform/alunix.h         |   2 +
  include/allegro/platform/alunixac.h.cmake |   3 +
  src/linux/lmsedrv.c                       |   4 +-
- src/linux/tslib.c                         | 165 ++++++++++++++++++++++++++++++
- 7 files changed, 206 insertions(+), 1 deletion(-)
+ src/linux/tslib.c                         | 169 ++++++++++++++++++++++++++++++
+ 7 files changed, 209 insertions(+), 1 deletion(-)
  create mode 100644 cmake/FindTslib.cmake
  create mode 100644 src/linux/tslib.c
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 8973857..fd883fc 100644
+index 8973857..76195f3 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -538,6 +538,7 @@ option(WANT_LINUX_CONSOLE "Want Linux console support (Linux)" off)
@@ -35,7 +38,7 @@ index 8973857..fd883fc 100644
  
  if(WANT_LINUX_CONSOLE AND CMAKE_SYSTEM_NAME STREQUAL Linux)
      set(ALLEGRO_LINUX 1)
-@@ -582,6 +583,17 @@ if(WANT_LINUX_CONSOLE AND CMAKE_SYSTEM_NAME STREQUAL Linux)
+@@ -582,6 +583,16 @@ if(WANT_LINUX_CONSOLE AND CMAKE_SYSTEM_NAME STREQUAL Linux)
                  ${SVGALIB_LIBRARY})
          endif()
      endif()
@@ -46,8 +49,7 @@ index 8973857..fd883fc 100644
 +            set(ALLEGRO_LINUX_TSLIB 1)
 +            include_directories(SYSTEM ${TSLIB_INCLUDE_DIR})
 +            set(CMAKE_REQUIRED_LIBRARIES ${TSLIB_LIBRARY})
-+            list(APPEND PLATFORM_LIBS_NON_MODULES ${TSLIB_LIBRARY})
-+            add_our_module(alleg-tslib src/linux/tslib.c ${TSLIB_LIBRARY})
++            list(APPEND PLATFORM_LIBS ${TSLIB_LIBRARY})
 +        endif()
 +    endif()
  endif(WANT_LINUX_CONSOLE AND CMAKE_SYSTEM_NAME STREQUAL Linux)
@@ -142,10 +144,10 @@ index ce2bfbf..0cc7bb8 100644
 -
 diff --git a/src/linux/tslib.c b/src/linux/tslib.c
 new file mode 100644
-index 0000000..36b8b60
+index 0000000..35b7631
 --- /dev/null
 +++ b/src/linux/tslib.c
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,169 @@
 +/*         ______   ___    ___
 + *        /\  _  \ /\_ \  /\_ \
 + *        \ \ \L\ \\//\ \ \//\ \      __     __   _ __   ___
@@ -165,6 +167,8 @@ index 0000000..36b8b60
 +
 +#include "allegro.h"
 +#include "allegro/internal/aintern.h"
++
++#ifdef ALLEGRO_LINUX_TSLIB
 +
 +#include <stdio.h>
 +#include <tslib.h>
@@ -311,6 +315,8 @@ index 0000000..36b8b60
 +   NULL, /* enable_hardware_cursor */
 +   NULL, /* select_system_cursor */
 +};
++
++#endif
 -- 
 1.7.11.2
 
