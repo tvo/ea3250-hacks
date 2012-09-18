@@ -1,6 +1,6 @@
 /*         ______   ___    ___
- *        /\  _  \ /\_ \  /\_ \ 
- *        \ \ \L\ \\//\ \ \//\ \      __     __   _ __   ___ 
+ *        /\  _  \ /\_ \  /\_ \
+ *        \ \ \L\ \\//\ \ \//\ \      __     __   _ __   ___
  *         \ \  __ \ \ \ \  \ \ \   /'__`\ /'_ `\/\`'__\/ __`\
  *          \ \ \/\ \ \_\ \_ \_\ \_/\  __//\ \L\ \ \ \//\ \L\ \
  *           \ \_\ \_\/\____\/\____\ \____\ \____ \ \_\\ \____/
@@ -10,25 +10,137 @@
  *
  *      MIDI instrument playing test program for the Allegro library.
  *
- *      By Shawn Hargreaves.
+ *      Original version by Shawn Hargreaves.
  *
- *      See readme.txt for copyright information.
+ *      Adapted by Tobi Vollebregt to:
+ *       - output midi signals on serial port,
+ *       - fit the GUI on a 240x320 touch screen.
  */
 
 
+#define DEBUGMODE
 #include "allegro.h"
+#include <linux/serial.h>
+#include <sys/ioctl.h>
+#include <termios.h>
 
 
 
 extern DIALOG thedialog[];
 
 
-#define DRIVER_STR   4
-#define DESC_STR     6
-#define INSTLIST     7
-#define PIANO        8
-#define VOLUME       10
-#define PAN          12
+#define INSTLIST     1
+#define PIANO        2
+#define VOLUME       3
+#define PAN          4
+
+
+
+#define MIDI_PORT    "/dev/ttyS1"
+#define MIDI_BAUD    31250
+
+int serial;
+
+
+
+int serial_midi_init()
+{
+   struct termios termios;
+   struct serial_struct serial_struct;
+
+   serial = open(MIDI_PORT, O_WRONLY);
+   if (serial < 0) {
+      TRACE("open: %s\n", strerror(errno));
+      return -1;
+   }
+
+   /* Source: /usr/lib/python2.6/dist-packages/serial/serialposix.py */
+   if (tcgetattr(serial, &termios)) {
+      TRACE("tcgetattr: %s\n", strerror(errno));
+      close(serial);
+      return -1;
+   }
+
+   /* set up raw mode / no echo / binary */
+   termios.c_cflag |= CLOCAL | CREAD;
+   termios.c_lflag &= ~(ICANON | ECHO | ECHOE | ECHOK | ECHONL | ISIG | IEXTEN);
+#ifdef ECHOCTL
+   termios.c_lflag &= ~ECHOCTL;
+#endif
+#ifdef ECHOKE
+   termios.c_lflag &= ~ECHOKE;
+#endif
+
+   termios.c_oflag &= ~OPOST;
+   termios.c_iflag &= ~(INLCR | IGNCR | ICRNL | IGNBRK);
+#ifdef IUCLC
+   termios.c_iflag &= ~IUCLC;
+#endif
+#ifdef PARMRK
+   termios.c_iflag &= ~PARMRK;
+#endif
+
+   /* setup baud rate */
+   cfsetispeed(&termios, B38400);
+   cfsetospeed(&termios, B38400);
+
+   /* setup char len */
+   termios.c_cflag &= ~CSIZE;
+   termios.c_cflag |= CS8;
+
+   /* setup stopbits */
+   termios.c_cflag &= ~CSTOPB;
+
+   /* setup parity */
+   termios.c_iflag &= ~(INPCK | ISTRIP);
+   termios.c_cflag &= ~(PARENB | PARODD);
+
+   /* setup flow control */
+   termios.c_iflag &= ~(IXON | IXOFF | IXANY);
+#if defined(CRTSCTS)
+   termios.c_cflag &= ~CRTSCTS;
+#elif defined(CNEW_RTSCTS)
+   termios.c_cflag &= ~CNEW_RTSCTS;
+#endif
+
+   /* buffer */
+   termios.c_cc[VMIN] = 0;
+   termios.c_cc[VTIME] = 0;
+
+   /* activate settings */
+   if (tcsetattr(serial, TCSANOW, &termios)) {
+      TRACE("tcsetattr: %s\n", strerror(errno));
+      close(serial);
+      return -1;
+   }
+
+   /* apply custom baud rate */
+   if (ioctl(serial, TIOCGSERIAL, &serial_struct)) {
+      TRACE("TIOCGSERIAL ioctl: %s\n", strerror(errno));
+      close(serial);
+      return -1;
+   }
+
+   serial_struct.custom_divisor = serial_struct.baud_base / MIDI_BAUD;
+   serial_struct.flags &= ~ASYNC_SPD_MASK;
+   serial_struct.flags |= ASYNC_SPD_CUST;
+
+   if (ioctl(serial, TIOCSSERIAL, &serial_struct)) {
+      TRACE("TIOCSSERIAL ioctl: %s\n", strerror(errno));
+      close(serial);
+      return -1;
+   }
+
+   return 0;
+}
+
+
+
+void serial_midi_out(unsigned char* msg, int size)
+{
+   if (write(serial, msg, size) < 0)
+      TRACE("serial: %s\n", strerror(errno));
+}
 
 
 
@@ -39,7 +151,7 @@ void set_patch(int channel, int prog)
    msg[0] = 0xC0+channel;
    msg[1] = prog;
 
-   midi_out(msg, 2);
+   serial_midi_out(msg, 2);
 }
 
 
@@ -52,7 +164,7 @@ void set_pan(int channel, int pan)
    msg[1] = 10;
    msg[2] = pan / 2;
 
-   midi_out(msg, 3);
+   serial_midi_out(msg, 3);
 }
 
 
@@ -65,7 +177,7 @@ void note_on(int channel, int pitch, int vel)
    msg[1] = pitch;
    msg[2] = vel / 2;
 
-   midi_out(msg, 3);
+   serial_midi_out(msg, 3);
 }
 
 
@@ -78,14 +190,14 @@ void note_off(int channel, int pitch)
    msg[1] = pitch;
    msg[2] = 0;
 
-   midi_out(msg, 3);
+   serial_midi_out(msg, 3);
 }
 
 
 
 char *instlist_getter(int index, int *list_size)
 {
-   static char *names[] = 
+   static char *names[] =
    {
       "Acoustic Grand",
       "Bright Acoustic",
@@ -292,10 +404,15 @@ int instlist_proc(int msg, DIALOG *d, int c)
 
 int piano_proc(int msg, DIALOG *d, int c)
 {
-   static char blackkey[12] = 
-   { 
-      FALSE, TRUE, FALSE, TRUE, FALSE, FALSE, 
-      TRUE, FALSE, TRUE, FALSE, TRUE, FALSE 
+/* Key width */
+#define KW 10
+/* Key color when pressed */
+#define KC makecol(0, 255, 0)
+
+   static char blackkey[12] =
+   {
+      FALSE, TRUE, FALSE, TRUE, FALSE, FALSE,
+      TRUE, FALSE, TRUE, FALSE, TRUE, FALSE
    };
 
    static int playing_channel = -1;
@@ -305,7 +422,9 @@ int piano_proc(int msg, DIALOG *d, int c)
    int patch = 0;
    int pitch = 60;
    int delay = 140;
-   int i, l, r;
+   int i, t, b;
+
+   (void) c; /* unused */
 
    switch (msg) {
 
@@ -315,31 +434,31 @@ int piano_proc(int msg, DIALOG *d, int c)
 	 break;
 
       case MSG_DRAW:
-	 for (i=0; i<d->w/12; i++) {
+	 for (i=0; i<d->h/KW; i++) {
 	    if (!blackkey[i%12]) {
-	       l = i*12;
-	       r = (i+1)*12;
+	       t = i*KW;
+	       b = (i+1)*KW;
 	       if (blackkey[(i-1)%12])
-		  l -= 6;
+		  t -= KW/2;
 	       if (blackkey[(i+1)%12])
-		  r += 6;
-	       rectfill(screen, d->x+l+1, d->y+1, d->x+r-1, d->y+d->h-1, (i == d->d1) ? 1 : d->bg);
-	       rect(screen, d->x+l, d->y, d->x+r, d->y+d->h, d->fg);
+		  b += KW/2;
+	       rectfill(screen, d->x+1, d->y+t+1, d->x+d->w-1, d->y+b-1, (i == d->d1) ? KC : d->bg);
+	       rect(screen, d->x, d->y+t, d->x+d->w, d->y+b, d->fg);
 	    }
 	 }
-	 for (i=0; i<d->w/12; i++) {
+	 for (i=0; i<d->h/KW; i++) {
 	    if (blackkey[i%12]) {
-	       l = i*12 + 1;
-	       r = (i+1)*12 - 1;
-	       rectfill(screen, d->x+l, d->y+d->h/4, d->x+r, d->y+d->h, (i == d->d1) ? 1 : d->fg);
+	       t = i*KW + 1;
+	       b = (i+1)*KW - 1;
+	       rectfill(screen, d->x+d->w/4, d->y+t, d->x+d->w, d->y+b, (i == d->d1) ? KC : d->fg);
 	    }
 	 }
 	 break;
 
       case MSG_CLICK:
-	 d->d1 = (mouse_x - d->x) / 12;
+	 d->d1 = (mouse_y - d->y) / KW;
 
-	 set_clip_rect(screen, d->x+d->d1*12-6, d->y, d->x+d->d1*12+18, d->y+d->h);
+	 set_clip_rect(screen, d->x, d->y+d->d1*KW-KW/2, d->x+d->w, d->y+d->d1*KW+KW+KW/2);
 	 object_message(d, MSG_DRAW, 0);
 	 set_clip_rect(screen, 0, 0, SCREEN_W-1, SCREEN_H-1);
 
@@ -363,18 +482,18 @@ int piano_proc(int msg, DIALOG *d, int c)
 	    set_patch(channel, patch);
 	 }
 
-	 set_pan(channel, CLAMP(0, atoi(thedialog[PAN].dp), 127));
-	 note_on(channel, pitch, CLAMP(0, atoi(thedialog[VOLUME].dp), 127));
+	 set_pan(channel, CLAMP(0, thedialog[PAN].d2, 255));
+	 note_on(channel, pitch, CLAMP(0, thedialog[VOLUME].d2, 255));
 
 	 playing_channel = channel;
 	 playing_pitch = pitch;
 
 	 do {
 	    poll_mouse();
-	 } while ((mouse_b) && (d->d1 == (mouse_x - d->x) / 12));
+	 } while ((mouse_b) && (d->d1 == (mouse_y - d->y) / KW));
 
 	 if (d->d1 >= 0) {
-	    set_clip_rect(screen, d->x+d->d1*12-6, d->y, d->x+d->d1*12+18, d->y+d->h);
+	    set_clip_rect(screen, d->x, d->y+d->d1*KW-KW/2, d->x+d->w, d->y+d->d1*KW+KW+KW/2);
 	    d->d1 = -1;
 	    object_message(d, MSG_DRAW, 0);
 	    set_clip_rect(screen, 0, 0, SCREEN_W-1, SCREEN_H-1);
@@ -394,30 +513,21 @@ int piano_proc(int msg, DIALOG *d, int c)
    }
 
    return D_O_K;
+
+#undef KC
+#undef KW
 }
 
-
-
-char volume_str[4] = "255";
-char pan_str[4] = "127";
 
 
 DIALOG thedialog[] =
 {
    /* (dialog proc)     (x)   (y)   (w)   (h)   (fg)  (bg)  (key)    (flags)     (d1)           (d2)     (dp)              (dp2) (dp3) */
    { d_clear_proc,      0,    0,    0,    0,    0,    8,    0,       0,          0,             0,       NULL,             NULL, NULL  },
-   { d_ctext_proc,      320,  4,    0,    0,    255,  8,    0,       0,          0,             0,       "MIDI test program for Allegro " ALLEGRO_VERSION_STR ", " ALLEGRO_PLATFORM_STR, NULL, NULL },
-   { d_ctext_proc,      320,  20,   0,    0,    255,  8,    0,       0,          0,             0,       "By Shawn Hargreaves, " ALLEGRO_DATE_STR, NULL, NULL },
-   { d_text_proc,       320,  128,  0,    0,    255,  8,    0,       0,          0,             0,       "Driver:",        NULL, NULL  },
-   { d_text_proc,       352,  152,  0,    0,    255,  8,    0,       0,          0,             0,       NULL,             NULL, NULL  },
-   { d_text_proc,       320,  192,  0,    0,    255,  8,    0,       0,          0,             0,       "Description:",   NULL, NULL  },
-   { d_text_proc,       352,  216,  0,    0,    255,  8,    0,       0,          0,             0,       NULL,             NULL, NULL  },
-   { instlist_proc,     16,   56,   257,  356,  255,  0,    32,      D_EXIT,     0,             0,       instlist_getter,  NULL, NULL  },
-   { piano_proc,        2,    440,  636,  40,   255,  0,    0,       0,          0,             0,       NULL,             NULL, NULL  },
-   { d_text_proc,       320,  320,  0,    0,    255,  8,    0,       0,          0,             0,       "Volume:",        NULL, NULL  },
-   { d_edit_proc,       392,  320,  64,   16,   255,  8,    0,       0,          3,             3,       volume_str,       NULL, NULL  },
-   { d_text_proc,       320,  352,  0,    0,    255,  8,    0,       0,          0,             0,       "Pan:",           NULL, NULL  },
-   { d_edit_proc,       392,  352,  64,   16,   255,  8,    0,       0,          3,             2,       pan_str,          NULL, NULL  },
+   { instlist_proc,     44,   4,   191,  256,   255,  0,    32,      D_EXIT,     0,             0,       instlist_getter,  NULL, NULL  },
+   { piano_proc,        0,    0,    40,  320,   255,  0,    0,       0,          0,             0,       NULL,             NULL, NULL  },
+   { d_slider_proc,     44,   264,  192,  24,   255,  8,    0,       0,          255,           255,     NULL,             NULL, NULL  },
+   { d_slider_proc,     44,   292,  192,  24,   255,  8,    0,       0,          255,           127,     NULL,             NULL, NULL  },
    { d_yield_proc,      0,    0,    0,    0,    0,    0,    0,       0,          0,             0,       NULL,             NULL, NULL  },
    { NULL,              0,    0,    0,    0,    0,    0,    0,       0,          0,             0,       NULL,             NULL, NULL  }
 };
@@ -432,30 +542,21 @@ int main(void)
    install_mouse();
    install_timer();
 
-   if (set_gfx_mode(GFX_AUTODETECT, 640, 480, 0, 0) != 0) {
+   set_color_depth(16);
+
+   if (set_gfx_mode(GFX_AUTODETECT, 240, 320, 0, 0) != 0) {
       set_gfx_mode(GFX_TEXT, 0, 0, 0, 0);
       allegro_message("Error setting graphics mode\n%s\n", allegro_error);
       return 1;
    }
 
-   if (install_sound(DIGI_AUTODETECT, MIDI_AUTODETECT, NULL) != 0) {
+   if (serial_midi_init()) {
       set_gfx_mode(GFX_TEXT, 0, 0, 0, 0);
-      allegro_message("Error initialising sound\n%s\n", allegro_error);
+      allegro_message("Error initializing serial port\n%s\n", ustrerror(errno));
       return 1;
    }
 
-   set_palette(desktop_palette);
-
-   #ifdef MIDI_DIGMID
-      if (midi_driver->id == MIDI_DIGMID)
-	 textout_centre_ex(screen, font, "Loading patch set...", SCREEN_W/2, SCREEN_H/2, 255, 0);
-   #endif
-
-   load_midi_patches();
-
-   thedialog[DRIVER_STR].dp = (void*)midi_driver->name;
-   thedialog[DESC_STR].dp = (void*)midi_driver->desc;
-
+   set_dialog_color(thedialog, 0, makecol(224, 224, 224));
    do_dialog(thedialog, INSTLIST);
 
    return 0;
